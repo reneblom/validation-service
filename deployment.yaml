@@ -1,0 +1,87 @@
+#
+# Deployment manifest
+#
+---
+apiVersion: apps/v1
+kind: Deployment # Defines blueprint for Pods
+metadata:
+  name: template-test-deployment # Shows up on e.g."kubectl get deployments"
+spec:
+  selector:
+    matchLabels:
+      app: spr-hello # Pods to include in deployment
+  replicas: 3 # Make high-available, consider HorizontalPodAutoscaler for advanced usage
+  template: # Blueprint for containers in Pod
+    metadata:
+      labels:
+        app: spr-hello
+        tier: vertrouwd # Predefined network zone by SP, ref. "NORA zonering"
+        ingress-frontoffice-policy: allow # Allow incoming traffic / expose pods to cluster load balancer
+    spec:
+      containers:
+        - name: spr-hello-container
+          image: harbor.cicd.s15m.nl/bzk-koop/spr-hello:latest
+          imagePullPolicy: Always # Always re-pull latest image for testing purposes
+          env:
+            - name: MY_NODE # https://kubernetes.io/docs/tasks/inject-data-application/environment-variable-expose-pod-information/
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - containerPort: 8080 # Internal container port
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 250m # 1 CPU = 1000; 50m is 50/1000 = 5% CPU
+              memory: 2048Mi # 50 Mebibytes
+            limits:
+              cpu: 250m
+              memory: 2048Mi
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 60 # To accomodate for low CPU resource-usage -> slower
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 60
+            timeoutSeconds: 3
+      imagePullSecrets:
+        - name: harbor-puller # Predefined secret, deployed by SP, so that Kubelet can pull image from Harbor
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spr-hello-service # Shows up on e.g."kubectl get services"
+spec:
+  ports:
+    - port: 8080 # Expose service port
+      protocol: TCP
+      targetPort: 8080 # Map to internal container port
+  selector:
+    app: spr-hello # Pods to include in service
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spr-hello-ingress
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: spr-hello.bzk-koop-tst.test2.s15m.nl
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: spr-hello-service
+                port:
+                  number: 8080
+  tls:
+    - hosts:
+        - spr-hello.bzk-koop-tst.test2.s15m.nl
+      secretName: wildcard-tls # Predefined secret, for all ingresses in namespace, bound to internal VPN-domain s15m.nl

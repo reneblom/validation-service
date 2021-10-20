@@ -1,0 +1,93 @@
+#
+# GitLab pipeline
+#
+
+image: harbor.cicd.s15m.nl/bzk-koop/aanleveren-toolbox:latest # Pipeline jobs run in toolbox image
+
+default: # Define default values for pipeline
+  tags:
+    - default # Use non-privileged GitLab runner, ref. https://docs.gitlab.com/ee/ci/yaml/#tags
+
+stages: # Pipeline is sequence of stages (in which jobs are run)
+  - building
+  - deployment
+  - testing
+
+variables: # Default variables for each job
+  FUNCTION_APP: template
+  VERSION_APP: latest # Needs be to be automated with maven version
+
+  CD_HARBOR_REGISTRY: "harbor.cicd.s15m.nl"
+  CD_IMAGE: ${CD_HARBOR_REGISTRY}/bzk-koop/${FUNCTION_APP} # CD_HARBOR_REGISTRY is to be defined by yourself; set to harbor.cicd.s15m.nl in your own GitLab group settings
+  CD_TAG: "latest"
+  # Variables for deploying
+  CD_NAMESPACE: bzk-koop-tst
+  CD_ENV: overheid-test2
+  # Helm 3 variables
+  CD_CHART_NAME: aanleveren-helm3-template
+  CD_PROJECT: bzk-koop-charts
+  CHART_VALUE: placeholder
+  CD_CHART_VERSION: 0.2.0 # Using 0.2.x serie for deployment at OS 4
+  HELM_EXPERIMENTAL_OCI: 1 # To avoid Error: this feature has been marked as experimental and is not enabled by default, see also https://helm.sh/docs/topics/registries/
+
+before_script: # List info and set build context; see build log for output
+  - echo "Started by ${GITLAB_USER_LOGIN} at $(date +%Y-%m-%d'-'%H-%M-%S)" # GITLAB_USER_LOGIN is predefined by GitLab
+
+after_script:
+  - echo "Ended at $(date +%Y-%m-%d'-'%H-%M-%S)"
+
+build image: # Job
+  stage: building # Binds job to stage
+  image:
+    name: gcr.io/kaniko-project/executor:v1.6.0-debug # Run Kaniko in its own image (conform Kaniko docs)
+    entrypoint: [""]
+  script:
+    - echo CD_HARBOR_REGISTRY $CD_HARBOR_REGISTRY
+    - PASSWORD_DECODED=$(echo ${HARBOR_ROBOT_SECRET} | base64 -d) # HARBOR_ROBOT_SECRET is predefined by SP in your own GitLab group settings
+    - echo "{\"auths\":{
+      \"${CD_HARBOR_REGISTRY}\":{\"username\":\"${HARBOR_ROBOT_NAME}\",\"password\":\"${PASSWORD_DECODED}\"}
+      }}" > /kaniko/.docker/config.json # Use Harbor credentials for pushing; HARBOR_ROBOT_NAME is also predefined by SP
+    - /kaniko/executor
+      --context .
+      --destination ${CD_IMAGE}:${CD_TAG}
+      --cache=true # Build and push to Harbor
+  only:
+    - main
+    - development
+    - merge_requests
+
+deploy:
+  stage: deployment # Bind job to stage
+  environment:
+    name: ${CD_ENV}
+  script:
+    - if [ "$CI_COMMIT_REF_NAME" == "development" ]; then CHART_VALUE="tst-value"; else CHART_VALUE="not_set";
+    - PASSWORD_DECODED=$(echo ${HARBOR_ROBOT_SECRET} | base64 -d)
+    - echo ${PASSWORD_DECODED} | helm registry login -u ${HARBOR_ROBOT_NAME} ${CD_HARBOR_REGISTRY} --password-stdin
+    - helm chart pull ${CD_HARBOR_REGISTRY}/${CD_PROJECT}/${CD_CHART_NAME}:${CD_CHART_VERSION}
+    - helm chart export ${CD_HARBOR_REGISTRY}/${CD_PROJECT}/${CD_CHART_NAME}:${CD_CHART_VERSION}
+    - helm upgrade -i ${CD_CHART_NAME} ./${CD_CHART_NAME} -n ${CD_NAMESPACE} --values ${CHART_VALUE}.yaml --set app=${FUNCTION_APP} --set appVersion=${VERSION_APP}
+  #    - cat deployment.yaml | sed "s/{{BITBUCKET_COMMIT}}/$BITBUCKET_COMMIT/g" | kubectl apply -f -
+  #    - kubectl apply -f ./deployment.yaml -n ${CD_NAMESPACE} # Using CD_NAMESPACE from above deployment context
+  only:
+    - main
+    - development
+    - merge_requests
+
+undeploy:
+  stage: deployment
+  environment:
+    name: ${CD_ENV}
+  script:
+    - helm uninstall ${CD_CHART_NAME} -n ${CD_NAMESPACE}
+#    - kubectl delete -f ./deployment.yaml -n ${CD_NAMESPACE} || echo OK, continue
+  when: manual
+
+test:
+  stage: testing
+  environment:
+    name: ${CD_ENV}
+  script:
+    - kubectl rollout status --timeout=180s deployment.apps/${FUNCTION_APP}-deployment -n ${CD_NAMESPACE}
+  when: manual
+
