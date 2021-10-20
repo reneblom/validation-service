@@ -1,0 +1,114 @@
+openapi: 3.0.0
+
+
+info:
+  version: 0.0.1
+  title: UBR-KOOP Service
+  description: The UBR-KOOP service description
+
+servers:
+  - url: https://localhost:8080/
+    description: This is where my api is
+
+tags:
+  - name: "Users"
+  - name: "Rols"
+
+
+paths:
+
+  /users/{userId}:
+    parameters:
+      - name: userId
+        description: user id
+        schema:
+          type: string
+        in: path
+        required: true
+
+    get:
+      summary: Get a user by ID
+      operationId: getUserById
+      responses:
+        "200":
+          description: This means its ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+    delete:
+      tags:
+        - "Users"
+      summary: Deletes a users
+      operationId: deleteUserById
+      responses:
+        "200":
+          description: The user is deleted
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        "400":
+          description: "Invalid ID supplied"
+        "404":
+          description: "User not found"
+
+  /users:
+    post:
+      summary: Created a user
+      operationId: createUser
+      requestBody:
+        description: HELLO
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+      responses:
+        "201":
+          description: CREATED
+
+    get:
+      summary: This gets all users
+      tags:
+        - "Users"
+      description: This is a detailed description
+      operationId: getAllUsersInUbrKoop
+      responses:
+        "200":
+          description: This means its ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        "400":
+          description: BAD REQUEST
+        "401":
+          description: UNAUTH
+
+
+
+components:
+
+  schemas:
+
+    User:
+      description: This is the user object
+      type: object
+      required:
+        - name:
+      properties:
+        name:
+          description: The name of user
+          type: string
+        email:
+          description: email address of the user
+          type: string
+
+
+
